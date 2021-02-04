@@ -1,0 +1,14 @@
+{
+    "name": "savks/migro",
+    "description": "Alternative laravel migrations",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Andrii Savluk",
+            "email": "savluk.andrii.v@gmail.com"
+        }
+    ],
+    "require": {
+        "laravel/framework": "^8.0"
+    }
+}
