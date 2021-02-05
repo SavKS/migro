@@ -4,8 +4,6 @@ namespace Savks\Migro\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Database\Schema\Blueprint;
-use Savks\Migro\Support\Manifest;
-use Savks\Migro\Support\Helpers;
 
 class Install extends Command
 {

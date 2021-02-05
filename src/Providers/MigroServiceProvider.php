@@ -29,6 +29,7 @@ class MigroServiceProvider extends ServiceProvider
             Commands\Install::class,
             Commands\Create::class,
             Commands\Migrate::class,
+            Commands\Rollback::class,
         ]);
     }
 

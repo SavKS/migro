@@ -7,45 +7,40 @@ use Closure;
 class Manifest
 {
     /**
-     * @var string
-     */
-    protected $table;
-
-    /**
-     * @var string|null
-     */
-    protected $tag;
-
-    /**
      * @var Step[]
      */
     protected $steps = [];
 
     /**
+     * @var File
+     */
+    protected $file;
+
+    /**
      * Factory constructor.
-     * @param string $table
-     * @param string|null $tag
+     * @param File $migrationFile
      */
-    public function __construct(string $table, string $tag = null)
+    public function __construct(File $migrationFile)
     {
-        $this->table = $table;
-        $this->tag = $tag;
+        $this->file = $migrationFile;
+
+        $this->collectSteps();
     }
 
     /**
-     * @return string
+     * @return void
      */
-    public function table(): string
+    protected function collectSteps(): void
     {
-        return $this->table;
+        require $this->file->path;
     }
 
     /**
-     * @return string
+     * @return File
      */
-    public function tag(): string
+    public function file(): File
     {
-        return $this->tag;
+        return $this->file;
     }
 
     /**

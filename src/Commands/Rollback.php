@@ -7,17 +7,18 @@ use Illuminate\Console\Command;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Schema\Grammars\Grammar;
+use Illuminate\Support\Collection;
 use Savks\Migro\Support\Manifest;
 use Savks\Migro\Support\Step;
 use Schema;
 use Throwable;
 
-class Migrate extends Command
+class Rollback extends Command
 {
     /**
      * @var string
      */
-    protected $signature = 'migro:migrate {table?} {--tag=} {--steps=} {--connection=}';
+    protected $signature = 'migro:rollback {table?} {--tag=} {--steps=} {--batches=} {--connection=}';
 
     /**
      * @var string
@@ -34,36 +35,22 @@ class Migrate extends Command
 
         $tag = $this->option('tag');
         $stepsLimit = $this->option('steps');
+        $batches = $this->option('batches');
 
         $filesRepository = app('migro')->collectFiles();
 
-        if ($table) {
-            $filesRepository = $filesRepository->forTable($table);
-        }
+        $records = $this->resolveRecords($table, $tag, $batches);
 
-        if ($tag) {
-            $filesRepository = $filesRepository->taggedAs($tag);
-        } else {
-            $filesRepository = $filesRepository->withoutTags();
-        }
-
-        if ($filesRepository->isEmpty()) {
-            $this->warn('Nothing to migrate...');
+        if ($records->isEmpty()) {
+            $this->warn('Nothing to rollback...');
 
             return self::SUCCESS;
         }
 
-        $migrationsTable = app('migro')->table();
+        dd($records);
 
-        $lastBatch = $this->connection()->table($migrationsTable)->max('batch');
-
-        $currentBatch = $lastBatch ? $lastBatch + 1 : 1;
-
-        $stepsCount = 0;
-
-        foreach ($filesRepository->all() as $file) {
-            $stepsCount += $this->processMigrationManifest(
-                $file->makeManifest(),
+        foreach ($records as $file) {
+            $stepsCount += $this->processRecord(
                 $currentBatch,
                 $stepsLimit
             );
@@ -83,7 +70,7 @@ class Migrate extends Command
      * @return int
      * @throws Throwable
      */
-    protected function processMigrationManifest(
+    protected function processRecord(
         Manifest $manifest,
         int $batch,
         int $stepsLimit = null
@@ -207,5 +194,42 @@ class Migrate extends Command
         }
 
         return $grammar;
+    }
+
+    /**
+     * @param array|null $table
+     * @param string|null $tag
+     * @param string|null $batches
+     * @return Collection
+     */
+    private function resolveRecords(?array $table, ?string $tag, ?string $batches): Collection
+    {
+        $lastBatch = $this->connection()->table(
+            app('migro')->table()
+        )->max('batch');
+
+        if (! $lastBatch) {
+            return collect();
+        }
+
+        $query = $this->connection()->table(
+            app('migro')->table()
+        );
+
+        if ($table) {
+            $query->where('table', '=', $table);
+        }
+
+        if ($tag) {
+            $query->where('tag', '=', $tag);
+        }
+
+        if ($batches) {
+            $query->where('batch', '>', $lastBatch - $batches);
+        } else {
+            $query->where('batch', '=', $lastBatch);
+        }
+
+        return $query->latest('ran_at')->get();
     }
 }

@@ -24,10 +24,9 @@ class Manager
     }
 
     /**
-     * @param string|null $tag
-     * @return array
+     * @return FilesRepository|File[]
      */
-    public function collectFilePaths(string $tag = null): array
+    public function collectFiles(): FilesRepository
     {
         $paths = $this->app['config']->get('migro.paths');
 
@@ -38,30 +37,12 @@ class Manager
                 rtrim($path, '/') . '/*.php' :
                 $path;
 
-            foreach (glob($path) as $file) {
-                $filename = basename($file);
-
-                if (! Helpers::isMigrationName($filename)) {
-                    continue;
-                }
-
-                if ($tag) {
-                    if (! Str::startsWith($filename, "{$tag}.")) {
-                        continue;
-                    }
-                } else {
-                    $filenameParts = explode('.', $filename);
-
-                    if (count($filenameParts) !== 2) {
-                        continue;
-                    }
-                }
-
-                $filePaths[] = $file;
-            }
+            $filePaths[] = glob($path);
         }
 
-        return $filePaths;
+        return FilesRepository::from(
+            $filePaths ? array_merge(...$filePaths) : []
+        );
     }
 
     /**

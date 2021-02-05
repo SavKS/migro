@@ -10,6 +10,11 @@ class Step
     public const MODIFY = 'modify';
     public const RAW = 'raw';
 
+    public const BEFORE_UP = 'before_up';
+    public const AFTER_UP = 'after_up';
+    public const BEFORE_DOWN = 'before_down';
+    public const AFTER_DOWN = 'after_down';
+
     /**
      * @var int
      */
@@ -39,6 +44,16 @@ class Step
      * @var bool
      */
     public $withoutTransaction = false;
+
+    /**
+     * @var array
+     */
+    protected $hooks = [
+        self::BEFORE_UP => [],
+        self::AFTER_UP => [],
+        self::BEFORE_DOWN => [],
+        self::AFTER_DOWN => [],
+    ];
 
     /**
      * Step constructor.
@@ -74,5 +89,63 @@ class Step
         $this->withoutTransaction = true;
 
         return $this;
+    }
+
+    /**
+     * @param string $name
+     * @param Closure $handler
+     * @return $this
+     */
+    protected function addHook(string $name, Closure $handler): Step
+    {
+        $this->hooks[$name][] = $handler;
+
+        return $this;
+    }
+
+    /**
+     * @param Closure $handler
+     * @return $this|Step
+     */
+    public function beforeUp(Closure $handler): Step
+    {
+        return $this->addHook(self::BEFORE_UP, $handler);
+    }
+
+    /**
+     * @param Closure $handler
+     * @return $this|Step
+     */
+    public function afterUp(Closure $handler): Step
+    {
+        return $this->addHook(self::AFTER_UP, $handler);
+    }
+
+    /**
+     * @param Closure $handler
+     * @return $this|Step
+     */
+    public function beforeDown(Closure $handler): Step
+    {
+        return $this->addHook(self::BEFORE_DOWN, $handler);
+    }
+
+    /**
+     * @param Closure $handler
+     * @return $this|Step
+     */
+    public function afterDown(Closure $handler): Step
+    {
+        return $this->addHook(self::AFTER_DOWN, $handler);
+    }
+
+    /**
+     * @param string $name
+     */
+    public function runHook(string $name): void
+    {
+        foreach ($this->hooks[$name] as $handler) {
+            $handler();
+        }
     }
 }

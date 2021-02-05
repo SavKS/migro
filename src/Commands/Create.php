@@ -3,7 +3,6 @@
 namespace Savks\Migro\Commands;
 
 use Illuminate\Console\Command;
-use Savks\Migro\Support\Helpers;
 use Symfony\Component\Filesystem\Filesystem;
 
 class Create extends Command
@@ -48,7 +47,7 @@ class Create extends Command
         $filename = $this->argument('table');
 
         if ($tag = $this->option('tag')) {
-            if (! Helpers::isValidTag($tag)) {
+            if (preg_match('/^[\w-]+$/', $tag) === 0) {
                 $this->error('Invalid tag name');
 
                 return self::FAILURE;
