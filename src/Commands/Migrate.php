@@ -2,18 +2,21 @@
 
 namespace Savks\Migro\Commands;
 
+use Closure;
 use DB;
-use Illuminate\Console\Command;
+use Illuminate\Console\ConfirmableTrait;
 use Illuminate\Database\Connection;
-use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Schema\Grammars\Grammar;
+use Savks\Consoler\Consoler;
 use Savks\Migro\Support\Manifest;
 use Savks\Migro\Support\Step;
 use Schema;
 use Throwable;
 
-class Migrate extends Command
+class Migrate extends BaseCommand
 {
+    use ConfirmableTrait;
+
     /**
      * @var string
      */
@@ -30,6 +33,10 @@ class Migrate extends Command
      */
     public function handle(): int
     {
+        if (! $this->confirmToProceed()) {
+            return self::FAILURE;
+        }
+
         $table = $this->argument('table');
 
         $tag = $this->option('tag');
@@ -70,6 +77,8 @@ class Migrate extends Command
         }
 
         if (! $stepsCount) {
+            $this->newLine();
+
             $this->warn('Nothing to migrate...');
         }
 
@@ -88,72 +97,89 @@ class Migrate extends Command
         int $batch,
         int $stepsLimit = null
     ): int {
-        $name = $manifest->file()->tag ?
-            "[{$manifest->file()->tag}]{$manifest->file()->table}" :
-            $manifest->file()->table;
-
-        $startTime = microtime(true);
-
-        $lastStep = $this
-            ->connection()
-            ->table(
-                app('migro')->table()
-            )
-            ->where('table', '=', $manifest->file()->table)
-            ->when(
-                $manifest->file()->tag,
-                function (Builder $query, string $tag) {
-                    $query->where('tag', '=', $tag);
-                }
-            )
-            ->max('step');
-
-        $steps = array_slice(
-            $manifest->steps(),
-            $lastStep ?: 0,
-            $stepsLimit
+        $name = $this->resolveFilename(
+            $manifest->file()->table,
+            $manifest->file()->tag
         );
 
-        if (! $steps) {
-            return 0;
-        }
+        $stepsCount = 0;
 
-        $this->getOutput()->writeln("<comment>Migrating:</comment> {$name}");
+        $runTime = $this->calcExecutionTime(function () use ($manifest, $stepsLimit, $name, $batch, &$stepsCount) {
+            $lastStep = $this->resolveLastStep($manifest);
 
-        foreach ($steps as $index => $step) {
-            $step->runHook($step::BEFORE_UP);
-
-            $this->upStep($manifest, $step);
-
-            $query = $this->connection()->table(
-                app('migro')->table()
+            $steps = array_slice(
+                $manifest->steps(),
+                $lastStep,
+                $stepsLimit
             );
 
-            $query->insert([
-                'table' => $manifest->file()->table,
-                'tag' => $manifest->file()->tag ?: null,
-                'step' => $step->number,
-                'batch' => $batch,
-            ]);
+            $stepsCount = count($steps);
 
-            $step->runHook($step::AFTER_UP);
+            $totalStepsCount = count(
+                $manifest->steps()
+            );
+
+            $this->getOutput()->writeln("<comment>Migrating:</comment> {$name}");
+
+            $bars = [];
+
+            for ($i = 0; $i < $totalStepsCount; $i++) {
+                if ($i < $lastStep) {
+                    $this->resolveConsoler()->createSpinnerProgress()->withMessage(
+                        'Step ' . ($i + 1) . ': <fg=cyan>migrated</>'
+                    )->finish();
+                } elseif ($i < $lastStep + $stepsCount) {
+                    $bars[$i + 1] = $this->resolveConsoler()->createSpinnerProgress()->withMessage(
+                        'Step ' . ($i + 1) . ': <fg=yellow>waiting</>'
+                    );
+                } else {
+                    $this->resolveConsoler()->createSpinnerProgress()->withMessage(
+                        'Step ' . ($i + 1) . ': <fg=white>outside the limits</>'
+                    );
+                }
+            }
+
+            if (! $steps) {
+                return 0;
+            }
+
+            foreach ($steps as $index => $step) {
+                $bar = $bars[$step->number]->withMessage("Step {$step->number}: <fg=blue>processing</>");
+
+                try {
+                    $runTime = $this->calcExecutionTime(function () use ($batch, $step, $manifest) {
+                        $step->runHook($step::BEFORE_UP);
+
+                        $this->upStep($manifest, $step);
+
+                        $query = $this->connection()->table(
+                            app('migro')->table()
+                        );
+
+                        $query->insert([
+                            'table' => $manifest->file()->table,
+                            'tag' => $manifest->file()->tag ?: null,
+                            'step' => $step->number,
+                            'batch' => $batch,
+                        ]);
+
+                        $step->runHook($step::AFTER_UP);
+                    });
+
+                    $bar->withMessage("Step {$step->number}: <fg=green>{$runTime}ms</>")->finish();
+                } catch (Throwable $e) {
+                    $bar->withMessage("Step {$step->number}: <fg=red>failed</>")->fail();
+
+                    throw $e;
+                }
+            }
+        });
+
+        if ($stepsCount) {
+            $this->getOutput()->writeln("<info>Migrated:</info>  {$name} ({$runTime}ms)");
         }
 
-        $runTime = number_format((microtime(true) - $startTime) * 1000, 2);
-
-        $this->getOutput()->writeln("<info>Migrated:</info>  {$name} ({$runTime}ms)");
-
-        return count($steps);
-    }
-
-    /**
-     * @return Connection
-     */
-    protected function connection(): Connection
-    {
-        return DB::connection(
-            $this->option('connection')
-        );
+        return $stepsCount;
     }
 
     /**
@@ -163,8 +189,6 @@ class Migrate extends Command
      */
     protected function upStep(Manifest $manifest, Step $step): void
     {
-        $this->getOutput()->writeln("Step: {$step->number}");
-
         $callback = function () use ($manifest, $step) {
             $table = $manifest->file()->table;
 
@@ -194,18 +218,21 @@ class Migrate extends Command
     }
 
     /**
-     * @return Grammar
+     * @param Manifest $manifest
+     * @return int
      */
-    protected function schemaGrammar(): Grammar
+    protected function resolveLastStep(Manifest $manifest): int
     {
-        $grammar = $this->connection()->getSchemaGrammar();
+        $query = $this->connection()->table(
+            app('migro')->table()
+        );
 
-        if ($grammar === null) {
-            $this->connection()->useDefaultSchemaGrammar();
+        $query->where('table', '=', $manifest->file()->table);
 
-            $grammar = $this->connection()->getSchemaGrammar();
+        if ($manifest->file()->tag) {
+            $query->where('tag', '=', $manifest->file()->tag);
         }
 
-        return $grammar;
+        return $query->max('step') ?? 0;
     }
 }

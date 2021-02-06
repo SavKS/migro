@@ -2,19 +2,29 @@
 
 namespace Savks\Migro\Commands;
 
+use Closure;
 use DB;
 use Illuminate\Console\Command;
+use Illuminate\Console\ConfirmableTrait;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Schema\Grammars\Grammar;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
+use Savks\Consoler\Consoler;
+use Savks\Consoler\Support\SpinnerProgress;
+use Savks\Migro\Support\File;
 use Savks\Migro\Support\Manifest;
 use Savks\Migro\Support\Step;
 use Schema;
+use stdClass;
 use Throwable;
 
-class Rollback extends Command
+class Rollback extends BaseCommand
 {
+    use ConfirmableTrait;
+
     /**
      * @var string
      */
@@ -31,6 +41,10 @@ class Rollback extends Command
      */
     public function handle(): int
     {
+        if (! $this->confirmToProceed()) {
+            return self::FAILURE;
+        }
+
         $table = $this->argument('table');
 
         $tag = $this->option('tag');
@@ -39,25 +53,49 @@ class Rollback extends Command
 
         $filesRepository = app('migro')->collectFiles();
 
-        $records = $this->resolveRecords($table, $tag, $batches);
+        $groupedRecords = $this->resolveGroupedRecords($table, $tag, $batches, $stepsLimit);
 
-        if ($records->isEmpty()) {
+        if ($groupedRecords->isEmpty()) {
             $this->warn('Nothing to rollback...');
 
             return self::SUCCESS;
         }
 
-        dd($records);
-
-        foreach ($records as $file) {
-            $stepsCount += $this->processRecord(
-                $currentBatch,
-                $stepsLimit
+        foreach ($groupedRecords as $group => $records) {
+            $migrationFiles = $filesRepository->forTable(
+                $records->first()->table
             );
-        }
 
-        if (! $stepsCount) {
-            $this->warn('Nothing to migrate...');
+            if ($tag) {
+                $migrationFiles = $migrationFiles->taggedAs($tag);
+            } else {
+                $migrationFiles = $migrationFiles->withoutTags();
+            }
+
+            /** @var File $migrationFile */
+            $migrationFile = Arr::first(
+                $migrationFiles->all()
+            );
+
+            if (! $migrationFile) {
+                $this->getOutput()->writeln(
+                    sprintf(
+                        "<fg=red>Migration not found:</> %s",
+                        $this->resolveFilename(
+                            $records->first()->table,
+                            $records->first()->tag
+                        )
+                    )
+                );
+
+                continue;
+            }
+
+            $this->processRecordsGroup(
+                $migrationFile->makeManifest(),
+                $group,
+                $records
+            );
         }
 
         return self::SUCCESS;
@@ -65,82 +103,92 @@ class Rollback extends Command
 
     /**
      * @param Manifest $manifest
-     * @param int $batch
-     * @param int|null $stepsLimit
-     * @return int
+     * @param string $group
+     * @param Collection $records
+     * @return void
      * @throws Throwable
      */
-    protected function processRecord(
+    protected function processRecordsGroup(
         Manifest $manifest,
-        int $batch,
-        int $stepsLimit = null
-    ): int {
-        $name = $manifest->file()->tag ?
-            "[{$manifest->file()->tag}]{$manifest->file()->table}" :
-            $manifest->file()->table;
+        string $group,
+        Collection $records
+    ): void {
+        $this->getOutput()->writeln("<comment>Rolling back:</comment> {$group}");
 
-        $startTime = microtime(true);
+        /** @var SpinnerProgress[] $bars */
+        $bars = [];
 
-        $lastStep = $this
-            ->connection()
-            ->table(
-                app('migro')->table()
-            )
-            ->where('table', '=', $manifest->file()->table)
-            ->when(
-                $manifest->file()->tag,
-                function (Builder $query, string $tag) {
-                    $query->where('tag', '=', $tag);
-                }
-            )
-            ->max('step');
+        $minInvolvedStepNumber = $records->min('step');
+        $maxInvolvedStepNumber = $records->max('step');
 
-        $steps = array_slice(
-            $manifest->steps(),
-            $lastStep ?: 0,
-            $stepsLimit
-        );
-
-        if (! $steps) {
-            return 0;
+        foreach ($manifest->steps() as $step) {
+            if ($step->number < $minInvolvedStepNumber) {
+                $this->resolveConsoler()->createSpinnerProgress()->withMessage(
+                    "Step {$step->number}: <fg=white>outside the limits</>"
+                );
+            } elseif ($step->number > $maxInvolvedStepNumber) {
+                $this->resolveConsoler()->createSpinnerProgress()->withMessage(
+                    "Step {$step->number}: <fg=magenta>rolled back</>"
+                );
+            } else {
+                $bars[$step->number] = $this->resolveConsoler()->createSpinnerProgress()->withMessage(
+                    "Step {$step->number}: <fg=yellow>waiting</>"
+                );
+            }
         }
 
-        $this->getOutput()->writeln("<comment>Migrating:</comment> {$name}");
+        $runTime = $this->calcExecutionTime(function () use ($bars, $group, $manifest, $records) {
+            foreach ($records as $record) {
+                $runTime = $this->calcExecutionTime(function () use ($group, $bars, $record, $manifest) {
+                    $step = Arr::first(
+                        $manifest->steps(),
+                        function (Step $step) use ($record) {
+                            return $step->number === $record->step;
+                        }
+                    );
 
-        foreach ($steps as $index => $step) {
-            $step->runHook($step::BEFORE_UP);
+                    if (! $step) {
+                        $bars[$step->number]->withMessage("Step {$record->step}: <fg=red>Not found</>")->fail();
 
-            $this->upStep($manifest, $step);
+                        $this->getOutput()->writeln("<fg=red>Rolling back failed:</> {$group}");
 
-            $query = $this->connection()->table(
-                app('migro')->table()
-            );
+                        return false;
+                    }
 
-            $query->insert([
-                'table' => $manifest->file()->table,
-                'tag' => $manifest->file()->tag ?: null,
-                'step' => $step->number,
-                'batch' => $batch,
-            ]);
+                    $bars[$step->number]->withMessage("Step {$record->step}: <fg=cyan>processing</>");
 
-            $step->runHook($step::AFTER_UP);
+                    try {
+                        $step->runHook($step::BEFORE_DOWN);
+
+                        $this->downStep($manifest, $step);
+
+                        $query = $this->connection()->table(
+                            app('migro')->table()
+                        );
+
+                        $query->where('id', '=', $record->id)->delete();
+
+                        $step->runHook($step::AFTER_DOWN);
+                    } catch (\Throwable $e) {
+                        $bars[$step->number]
+                            ->withMessage("Step {$record->step}: <fg=red>failed</>")
+                            ->fail();
+
+                        throw $e;
+                    }
+                });
+
+                $bars[$record->step]
+                    ->withMessage("Step {$record->step}: <fg=green>{$runTime}ms</>")
+                    ->finish();
+            }
+        });
+
+        if ($runTime === null) {
+            return;
         }
 
-        $runTime = number_format((microtime(true) - $startTime) * 1000, 2);
-
-        $this->getOutput()->writeln("<info>Migrated:</info>  {$name} ({$runTime}ms)");
-
-        return count($steps);
-    }
-
-    /**
-     * @return Connection
-     */
-    protected function connection(): Connection
-    {
-        return DB::connection(
-            $this->option('connection')
-        );
+        $this->getOutput()->writeln("<info>Rolled back:</info>  {$group} ({$runTime}ms)");
     }
 
     /**
@@ -148,26 +196,24 @@ class Rollback extends Command
      * @param Step $step
      * @throws Throwable
      */
-    protected function upStep(Manifest $manifest, Step $step): void
+    protected function downStep(Manifest $manifest, Step $step): void
     {
-        $this->getOutput()->writeln("Step: {$step->number}");
-
         $callback = function () use ($manifest, $step) {
             $table = $manifest->file()->table;
 
             switch ($step->type) {
                 case $step::CREATE:
-                    Schema::create($table, $step->up);
+                    Schema::dropIfExists($table);
                     break;
                 case $step::MODIFY:
-                    Schema::table($table, $step->up);
+                    Schema::table($table, $step->down);
                     break;
                 case $step::RAW:
-                    call_user_func($step->up, $manifest, $step);
+                    call_user_func($step->down, $manifest, $step);
                     break;
 
                 default:
-                    throw new \RuntimeException("Invalid migration step type \"{$step->type}\"");
+                    throw new \RuntimeException("Invalid rollback step type \"{$step->type}\"");
             }
         };
 
@@ -181,29 +227,18 @@ class Rollback extends Command
     }
 
     /**
-     * @return Grammar
-     */
-    protected function schemaGrammar(): Grammar
-    {
-        $grammar = $this->connection()->getSchemaGrammar();
-
-        if ($grammar === null) {
-            $this->connection()->useDefaultSchemaGrammar();
-
-            $grammar = $this->connection()->getSchemaGrammar();
-        }
-
-        return $grammar;
-    }
-
-    /**
-     * @param array|null $table
+     * @param string |null $table
      * @param string|null $tag
      * @param string|null $batches
-     * @return Collection
+     * @param int|null $stepsLimit
+     * @return Collection|Collection[]
      */
-    private function resolveRecords(?array $table, ?string $tag, ?string $batches): Collection
-    {
+    private function resolveGroupedRecords(
+        ?string $table,
+        ?string $tag,
+        ?string $batches,
+        int $stepsLimit = null
+    ): Collection {
         $lastBatch = $this->connection()->table(
             app('migro')->table()
         )->max('batch');
@@ -230,6 +265,25 @@ class Rollback extends Command
             $query->where('batch', '=', $lastBatch);
         }
 
-        return $query->latest('ran_at')->get();
+        $query->orderBy('step', 'desc');
+
+        $records = $query->get();
+
+        /** @var Collection[] $groupedRecords */
+        $groupedRecords = $records->groupBy(function (stdClass $record) {
+            return $this->resolveFilename($record->table, $record->tag);
+        })->sortKeys();
+
+        $result = [];
+
+        foreach ($groupedRecords as $group => $records) {
+            $result[$group] = $records->sortByDesc('step');
+
+            if ($stepsLimit) {
+                $result[$group] = $result[$group]->take($stepsLimit);
+            }
+        }
+
+        return collect($result);
     }
 }

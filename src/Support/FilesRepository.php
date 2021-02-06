@@ -2,6 +2,8 @@
 
 namespace Savks\Migro\Support;
 
+use Illuminate\Support\Arr;
+
 class FilesRepository
 {
     /**
@@ -49,6 +51,32 @@ class FilesRepository
         }
 
         return new static($result);
+    }
+
+    /**
+     * @param string|null $table
+     * @param string|null $tag
+     * @return File|FilesRepository
+     */
+    public function pickUp(?string $table, ?string $tag)
+    {
+        $items = $this;
+
+        if ($table) {
+            $items = $items->forTable($table);
+        }
+
+        if ($tag) {
+            $items = $items->taggedAs($tag);
+        } else {
+            $items = $items->withoutTags();
+        }
+
+        return $table && $tag ?
+            Arr::first(
+                $items->all()
+            ) :
+            $items;
     }
 
     /**
