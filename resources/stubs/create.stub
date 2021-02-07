@@ -1,0 +1,12 @@
+<?php
+
+use Illuminate\Database\Schema\Blueprint;
+use Savks\Migro\Support\ManifestFacade;
+
+ManifestFacade::create(function (Blueprint $table) {
+    $table->id();
+
+    $table->timestamps();
+
+    // $table->softDeletes();
+});

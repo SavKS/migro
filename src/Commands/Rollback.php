@@ -2,21 +2,18 @@
 
 namespace Savks\Migro\Commands;
 
-use Closure;
-use DB;
-use Illuminate\Console\Command;
 use Illuminate\Console\ConfirmableTrait;
-use Illuminate\Database\Connection;
-use Illuminate\Database\Query\Builder;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Database\Schema\Grammars\Grammar;
-use Illuminate\Support\Arr;
-use Illuminate\Support\Collection;
-use Savks\Consoler\Consoler;
+use Illuminate\Support\{
+    Arr,
+    Collection
+};
+use RuntimeException;
 use Savks\Consoler\Support\SpinnerProgress;
-use Savks\Migro\Support\File;
-use Savks\Migro\Support\Manifest;
-use Savks\Migro\Support\Step;
+use Savks\Migro\Support\{
+    File,
+    Manifest,
+    Step
+};
 use Schema;
 use stdClass;
 use Throwable;
@@ -28,12 +25,16 @@ class Rollback extends BaseCommand
     /**
      * @var string
      */
-    protected $signature = 'migro:rollback {table?} {--tag=} {--steps=} {--batches=} {--connection=}';
+    protected $signature = 'migro:rollback {--table= : The database table to use}
+                {--tag= : Using tagged tables by tag name}
+                {--steps= : Limitation on the number of steps per migration}
+                {--batches= : Limitation on the number of batches}
+                {--connection= : The database connection to use}';
 
     /**
      * @var string
      */
-    protected $description = 'Migrate all registered migrations';
+    protected $description = 'Rollback the last database migration';
 
     /**
      * @return int
@@ -45,8 +46,8 @@ class Rollback extends BaseCommand
             return self::FAILURE;
         }
 
-        $table = $this->argument('table');
 
+        $table = $this->option('table');
         $tag = $this->option('tag');
         $stepsLimit = $this->option('steps');
         $batches = $this->option('batches');
@@ -78,13 +79,12 @@ class Rollback extends BaseCommand
             );
 
             if (! $migrationFile) {
-                $this->getOutput()->writeln(
-                    sprintf(
-                        "<fg=red>Migration not found:</> %s",
-                        $this->resolveFilename(
-                            $records->first()->table,
-                            $records->first()->tag
-                        )
+                $this->consoler()->formatWritelnToOutput(
+                    "%s %s",
+                    $this->consoler()->format('Migration not found:')->red(),
+                    $this->resolveFilename(
+                        $records->first()->table,
+                        $records->first()->tag
                     )
                 );
 
@@ -121,25 +121,27 @@ class Rollback extends BaseCommand
         $minInvolvedStepNumber = $records->min('step');
         $maxInvolvedStepNumber = $records->max('step');
 
+        $consoler = $this->consoler();
+
         foreach ($manifest->steps() as $step) {
             if ($step->number < $minInvolvedStepNumber) {
-                $this->resolveConsoler()->createSpinnerProgress()->withMessage(
-                    "Step {$step->number}: <fg=white>outside the limits</>"
+                $consoler->createSpinnerProgress()->withMessage(
+                    "Step {$step->number}: {$consoler->format('outside the limits')->white()}"
                 );
             } elseif ($step->number > $maxInvolvedStepNumber) {
-                $this->resolveConsoler()->createSpinnerProgress()->withMessage(
-                    "Step {$step->number}: <fg=magenta>rolled back</>"
+                $consoler->createSpinnerProgress()->withMessage(
+                    "Step {$step->number}: {$consoler->format('rolled back')->magenta()}"
                 );
             } else {
-                $bars[$step->number] = $this->resolveConsoler()->createSpinnerProgress()->withMessage(
-                    "Step {$step->number}: <fg=yellow>waiting</>"
+                $bars[$step->number] = $consoler->createSpinnerProgress()->withMessage(
+                    "Step {$step->number}: {$consoler->format('waiting')->yellow()}"
                 );
             }
         }
 
-        $runTime = $this->calcExecutionTime(function () use ($bars, $group, $manifest, $records) {
+        $runTime = $this->calcExecutionTime(function () use ($consoler, $bars, $group, $manifest, $records) {
             foreach ($records as $record) {
-                $runTime = $this->calcExecutionTime(function () use ($group, $bars, $record, $manifest) {
+                $runTime = $this->calcExecutionTime(function () use ($consoler, $group, $bars, $record, $manifest) {
                     $step = Arr::first(
                         $manifest->steps(),
                         function (Step $step) use ($record) {
@@ -148,14 +150,20 @@ class Rollback extends BaseCommand
                     );
 
                     if (! $step) {
-                        $bars[$step->number]->withMessage("Step {$record->step}: <fg=red>Not found</>")->fail();
+                        $bars[$step->number]->withMessage(
+                            "Step {$record->step}: {$consoler->format('Not found')->red()}"
+                        )->fail();
 
-                        $this->getOutput()->writeln("<fg=red>Rolling back failed:</> {$group}");
+                        $consoler->writelnToOutput(
+                            "{$consoler->format('Rolling back failed:')->red()} {$group}"
+                        );
 
                         return false;
                     }
 
-                    $bars[$step->number]->withMessage("Step {$record->step}: <fg=cyan>processing</>");
+                    $bars[$step->number]->withMessage(
+                        "Step {$record->step}: {$consoler->format('processing')->cyan()}"
+                    );
 
                     try {
                         $step->runHook($step::BEFORE_DOWN);
@@ -170,17 +178,17 @@ class Rollback extends BaseCommand
 
                         $step->runHook($step::AFTER_DOWN);
                     } catch (\Throwable $e) {
-                        $bars[$step->number]
-                            ->withMessage("Step {$record->step}: <fg=red>failed</>")
-                            ->fail();
+                        $bars[$step->number]->withMessage(
+                            "Step {$record->step}: {$consoler->format('failed')->red()}"
+                        )->fail();
 
                         throw $e;
                     }
                 });
 
-                $bars[$record->step]
-                    ->withMessage("Step {$record->step}: <fg=green>{$runTime}ms</>")
-                    ->finish();
+                $bars[$record->step]->withMessage(
+                    "Step {$record->step}: {$consoler->format("{$runTime}ms")->green()}"
+                )->success();
             }
         });
 
@@ -213,7 +221,7 @@ class Rollback extends BaseCommand
                     break;
 
                 default:
-                    throw new \RuntimeException("Invalid rollback step type \"{$step->type}\"");
+                    throw new RuntimeException("Invalid rollback step type \"{$step->type}\"");
             }
         };
 
@@ -239,9 +247,7 @@ class Rollback extends BaseCommand
         ?string $batches,
         int $stepsLimit = null
     ): Collection {
-        $lastBatch = $this->connection()->table(
-            app('migro')->table()
-        )->max('batch');
+        $lastBatch = $this->resolveLastBatch($table, $tag);
 
         if (! $lastBatch) {
             return collect();
@@ -285,5 +291,27 @@ class Rollback extends BaseCommand
         }
 
         return collect($result);
+    }
+
+    /**
+     * @param string|null $table
+     * @param string|null $tag
+     * @return int|null
+     */
+    private function resolveLastBatch(?string $table, ?string $tag): ?int
+    {
+        $query = $this->connection()->table(
+            app('migro')->table()
+        );
+
+        if ($table) {
+            $query->where('table', '=', $table);
+        }
+
+        if ($tag) {
+            $query->where('tag', '=', $tag);
+        }
+
+        return $query->max('batch');
     }
 }

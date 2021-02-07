@@ -2,14 +2,13 @@
 
 namespace Savks\Migro\Commands;
 
-use Closure;
-use DB;
 use Illuminate\Console\ConfirmableTrait;
-use Illuminate\Database\Connection;
-use Illuminate\Database\Schema\Grammars\Grammar;
-use Savks\Consoler\Consoler;
-use Savks\Migro\Support\Manifest;
-use Savks\Migro\Support\Step;
+use Savks\Migro\Support\{
+    Manifest,
+    Step
+};
+use RuntimeException;
+use Savks\Consoler\Support\SpinnerProgress;
 use Schema;
 use Throwable;
 
@@ -20,7 +19,10 @@ class Migrate extends BaseCommand
     /**
      * @var string
      */
-    protected $signature = 'migro:migrate {table?} {--tag=} {--steps=} {--connection=}';
+    protected $signature = 'migro:migrate {--table= : The database table to use}
+                {--tag= : Using tagged tables by tag name}
+                {--steps= : Limitation on the number of steps per migration}
+                {--connection= : The database connection to use}';
 
     /**
      * @var string
@@ -37,8 +39,7 @@ class Migrate extends BaseCommand
             return self::FAILURE;
         }
 
-        $table = $this->argument('table');
-
+        $table = $this->option('table');
         $tag = $this->option('tag');
         $stepsLimit = $this->option('steps');
 
@@ -77,8 +78,6 @@ class Migrate extends BaseCommand
         }
 
         if (! $stepsCount) {
-            $this->newLine();
-
             $this->warn('Nothing to migrate...');
         }
 
@@ -115,25 +114,32 @@ class Migrate extends BaseCommand
 
             $stepsCount = count($steps);
 
+            if (!$stepsCount) {
+                return;
+            }
+
             $totalStepsCount = count(
                 $manifest->steps()
             );
 
-            $this->getOutput()->writeln("<comment>Migrating:</comment> {$name}");
+            $consoler = $this->consoler();
 
+            $consoler->writelnToOutput("<comment>Migrating:</comment> {$name}");
+
+            /** @var SpinnerProgress[] $bars */
             $bars = [];
 
             for ($i = 0; $i < $totalStepsCount; $i++) {
                 if ($i < $lastStep) {
-                    $this->resolveConsoler()->createSpinnerProgress()->withMessage(
-                        'Step ' . ($i + 1) . ': <fg=cyan>migrated</>'
+                    $consoler->createSpinnerProgress()->withMessage(
+                        'Step ' . ($i + 1) . ": {$consoler->format('migrated')->cyan()}"
                     )->finish();
                 } elseif ($i < $lastStep + $stepsCount) {
-                    $bars[$i + 1] = $this->resolveConsoler()->createSpinnerProgress()->withMessage(
-                        'Step ' . ($i + 1) . ': <fg=yellow>waiting</>'
+                    $bars[$i + 1] = $consoler->createSpinnerProgress()->withMessage(
+                        'Step ' . ($i + 1) . ": {$consoler->format('waiting')->yellow()}"
                     );
                 } else {
-                    $this->resolveConsoler()->createSpinnerProgress()->withMessage(
+                    $consoler->createSpinnerProgress()->withMessage(
                         'Step ' . ($i + 1) . ': <fg=white>outside the limits</>'
                     );
                 }
@@ -144,7 +150,9 @@ class Migrate extends BaseCommand
             }
 
             foreach ($steps as $index => $step) {
-                $bar = $bars[$step->number]->withMessage("Step {$step->number}: <fg=blue>processing</>");
+                $bar = $bars[$step->number]->withMessage(
+                    "Step {$step->number}: {$consoler->format('processing')->blue()->blink()}"
+                );
 
                 try {
                     $runTime = $this->calcExecutionTime(function () use ($batch, $step, $manifest) {
@@ -166,9 +174,13 @@ class Migrate extends BaseCommand
                         $step->runHook($step::AFTER_UP);
                     });
 
-                    $bar->withMessage("Step {$step->number}: <fg=green>{$runTime}ms</>")->finish();
+                    $bar->withMessage(
+                        "Step {$step->number}: {$consoler->format("{$runTime}ms")->green()}"
+                    )->success();
                 } catch (Throwable $e) {
-                    $bar->withMessage("Step {$step->number}: <fg=red>failed</>")->fail();
+                    $bar->withMessage(
+                        "Step {$step->number}: {$consoler->format('failed')->red()}"
+                    )->fail();
 
                     throw $e;
                 }
@@ -176,7 +188,7 @@ class Migrate extends BaseCommand
         });
 
         if ($stepsCount) {
-            $this->getOutput()->writeln("<info>Migrated:</info>  {$name} ({$runTime}ms)");
+            $this->consoler()->writelnToOutput("<info>Migrated:</info>  {$name} ({$runTime}ms)");
         }
 
         return $stepsCount;
@@ -204,7 +216,7 @@ class Migrate extends BaseCommand
                     break;
 
                 default:
-                    throw new \RuntimeException("Invalid migration step type \"{$step->type}\"");
+                    throw new RuntimeException("Invalid migration step type \"{$step->type}\"");
             }
         };
 

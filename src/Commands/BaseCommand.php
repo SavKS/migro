@@ -72,7 +72,7 @@ abstract class BaseCommand extends Command
     /**
      * @return Consoler
      */
-    protected function resolveConsoler(): Consoler
+    protected function consoler(): Consoler
     {
         if ($this->consoler === null) {
             $this->consoler = Consoler::fromOutputStyle(

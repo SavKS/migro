@@ -2,6 +2,7 @@
 
 namespace Savks\Migro\Support;
 
+use Closure;
 use Illuminate\Support\Arr;
 
 class FilesRepository
@@ -29,11 +30,28 @@ class FilesRepository
     }
 
     /**
+     * @param Closure|null $filter
+     * @return File|null
+     */
+    public function first(Closure $filter = null): ?File
+    {
+        return Arr::first($this->items, $filter);
+    }
+
+    /**
      * @return bool
      */
     public function isEmpty(): bool
     {
         return empty($this->items);
+    }
+
+    /**
+     * @return bool
+     */
+    public function isNotEmpty(): bool
+    {
+        return ! $this->isEmpty();
     }
 
     /**

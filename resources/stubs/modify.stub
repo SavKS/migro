@@ -1,0 +1,10 @@
+<?php
+
+use Illuminate\Database\Schema\Blueprint;
+use Savks\Migro\Support\ManifestFacade;
+
+ManifestFacade::modify(function (Blueprint $table) {
+    //
+}, function (Blueprint $table) {
+    //
+});

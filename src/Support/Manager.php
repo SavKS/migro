@@ -2,8 +2,6 @@
 
 namespace Savks\Migro\Support;
 
-use Illuminate\Database\Connection;
-use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Str;
 
@@ -15,6 +13,11 @@ class Manager
     protected $app;
 
     /**
+     * @var array
+     */
+    protected $customPaths = [];
+
+    /**
      * Manager constructor.
      * @param Application $app
      */
@@ -24,11 +27,27 @@ class Manager
     }
 
     /**
+     * @param string $path
+     * @return $this
+     */
+    public function registerPath(string $path): Manager
+    {
+        if (! in_array($path, $this->customPaths, true)) {
+            $this->customPaths[] = $path;
+        }
+
+        return $this;
+    }
+
+    /**
      * @return FilesRepository|File[]
      */
     public function collectFiles(): FilesRepository
     {
-        $paths = $this->app['config']->get('migro.paths');
+        $paths = array_merge(
+            $this->app['config']->get('migro.paths', []),
+            $this->customPaths
+        );
 
         $filePaths = [];
 
@@ -40,9 +59,13 @@ class Manager
             $filePaths[] = glob($path);
         }
 
-        return FilesRepository::from(
-            $filePaths ? array_merge(...$filePaths) : []
+        $result = array_values(
+            array_unique(
+                $filePaths ? array_merge(...$filePaths) : []
+            )
         );
+
+        return FilesRepository::from($result);
     }
 
     /**
