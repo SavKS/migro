@@ -2,15 +2,8 @@
 
 namespace Savks\Migro\Commands;
 
-use Illuminate\Console\ConfirmableTrait;
 use Illuminate\Support\Collection;
-use Savks\Migro\Support\{
-    File,
-    Manifest,
-    Step};
-use RuntimeException;
-use Savks\Consoler\Support\SpinnerProgress;
-use Schema;
+use Savks\Migro\Support\File;
 use stdClass;
 use Throwable;
 

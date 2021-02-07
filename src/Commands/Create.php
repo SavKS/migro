@@ -2,8 +2,6 @@
 
 namespace Savks\Migro\Commands;
 
-use Illuminate\Console\Command;
-use Savks\Consoler\Consoler;
 use Symfony\Component\Filesystem\Filesystem;
 
 class Create extends BaseCommand
