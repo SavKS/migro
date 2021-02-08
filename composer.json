@@ -1,5 +1,5 @@
 {
-    "name": "savks/migro",
+    "name": "savks/laravel-migro",
     "description": "Alternative laravel migrations",
     "type": "library",
     "authors": [
@@ -19,7 +19,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Savks\\Migro\\MigroServiceProvider"
+                "Savks\\Migro\\Providers\\MigroServiceProvider"
             ]
         }
     },
