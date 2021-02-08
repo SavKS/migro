@@ -22,5 +22,8 @@
                 "Savks\\Migro\\MigroServiceProvider"
             ]
         }
+    },
+    "require-dev": {
+        "pestphp/pest": "^1.0"
     }
 }
