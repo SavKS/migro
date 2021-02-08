@@ -54,10 +54,7 @@ class Status extends BaseCommand
             $filesRepository->all()
         );
 
-        [
-            'simple' => $simpleFiles,
-            'tagged' => $taggedFiles,
-        ] = collect($filesRepository->all())
+        $fileGroups = collect($filesRepository->all())
             ->groupBy(function (File $file) {
                 return $file->tag ? 'tagged' : 'simple';
             })
@@ -67,7 +64,7 @@ class Status extends BaseCommand
                 });
             });
 
-        $files = collect()->merge($simpleFiles)->merge($taggedFiles);
+        $files = collect()->merge($fileGroups['simple'] ?? [])->merge($fileGroups['tagged'] ?? []);
 
         foreach ($files as $index => $file) {
             $col1 = $this->resolveFilename($file->table, $file->tag);
@@ -96,7 +93,7 @@ class Status extends BaseCommand
         $this->table([
             'Name',
             'Step',
-            'Status'
+            'Status',
         ], $rows);
 
         return self::SUCCESS;

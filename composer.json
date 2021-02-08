@@ -11,6 +11,9 @@
     "require": {
         "laravel/framework": "^8.0"
     },
+    "require-dev": {
+        "pestphp/pest": "^1.0"
+    },
     "autoload": {
         "psr-4": {
             "Savks\\Migro\\": "src"
@@ -22,8 +25,5 @@
                 "Savks\\Migro\\Providers\\MigroServiceProvider"
             ]
         }
-    },
-    "require-dev": {
-        "pestphp/pest": "^1.0"
     }
 }

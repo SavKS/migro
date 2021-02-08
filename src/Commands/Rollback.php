@@ -52,8 +52,6 @@ class Rollback extends BaseCommand
         $stepsLimit = $this->option('steps');
         $batches = $this->option('batches');
 
-        $filesRepository = app('migro')->collectFiles();
-
         $groupedRecords = $this->resolveGroupedRecords($table, $tag, $batches, $stepsLimit);
 
         if ($groupedRecords->isEmpty()) {
@@ -63,42 +61,56 @@ class Rollback extends BaseCommand
         }
 
         foreach ($groupedRecords as $group => $records) {
-            $migrationFiles = $filesRepository->forTable(
-                $records->first()->table
-            );
-
-            if ($tag) {
-                $migrationFiles = $migrationFiles->taggedAs($tag);
-            } else {
-                $migrationFiles = $migrationFiles->withoutTags();
-            }
-
-            /** @var File $migrationFile */
-            $migrationFile = Arr::first(
-                $migrationFiles->all()
-            );
-
-            if (! $migrationFile) {
-                $this->consoler()->formatWritelnToOutput(
-                    "%s %s",
-                    $this->consoler()->format('Migration not found:')->red(),
-                    $this->resolveFilename(
-                        $records->first()->table,
-                        $records->first()->tag
-                    )
-                );
-
-                continue;
-            }
-
-            $this->processRecordsGroup(
-                $migrationFile->makeManifest(),
-                $group,
-                $records
-            );
+            $this->processRecordsGroup($group, $records);
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * @param string $group
+     * @param Collection $records
+     * @throws Throwable
+     */
+    protected function processRecordsGroup(string $group, Collection $records): void
+    {
+        $simpleRecord = $records->first();
+
+        $migrationFiles = app('migro')->collectFiles()->forTable($simpleRecord->table);
+
+        if ($simpleRecord->tag) {
+            $migrationFiles = $migrationFiles->taggedAs($simpleRecord->tag);
+        } else {
+            $migrationFiles = $migrationFiles->withoutTags();
+        }
+
+        /** @var File $migrationFile */
+        $migrationFile = $migrationFiles->first();
+
+        if ($migrationFile->table !== $simpleRecord->table
+            || $migrationFile->tag !== $simpleRecord->tag
+        ) {
+            throw new RuntimeException('Wrong migration selected');
+        }
+
+        if (! $migrationFile) {
+            $this->consoler()->formatWritelnToOutput(
+                "%s %s",
+                $this->consoler()->format('Migration not found:')->red(),
+                $this->resolveFilename(
+                    $simpleRecord->table,
+                    $simpleRecord->tag
+                )
+            );
+
+            return;
+        }
+
+        $this->rollbackRecordsGroup(
+            $migrationFile->makeManifest(),
+            $group,
+            $records
+        );
     }
 
     /**
@@ -108,7 +120,7 @@ class Rollback extends BaseCommand
      * @return void
      * @throws Throwable
      */
-    protected function processRecordsGroup(
+    protected function rollbackRecordsGroup(
         Manifest $manifest,
         string $group,
         Collection $records

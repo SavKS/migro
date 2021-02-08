@@ -10,7 +10,7 @@ class Create extends BaseCommand
      * @var string
      */
     protected $signature = 'migro:create {table : The migration table name}
-                {--tag= : The tag of the migration}
+                {tag? : The tag of the migration}
                 {--path= : The location where the migration file should be created}';
 
     /**
@@ -45,7 +45,7 @@ class Create extends BaseCommand
         );
 
         $table = $this->argument('table');
-        $tag = $this->option('tag');
+        $tag = $this->argument('tag');
 
         $files = app('migro')->collectFiles()->forTable($table);
 
