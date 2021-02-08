@@ -19,7 +19,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Savks\\Migro\\MigroServiceProvider"
+                "Savks\\Migro\\Providers\\MigroServiceProvider"
             ]
         }
     }
