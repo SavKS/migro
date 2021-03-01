@@ -53,23 +53,6 @@ abstract class BaseCommand extends Command
     }
 
     /**
-     * @param Closure $handler
-     * @return string|null
-     */
-    protected function calcExecutionTime(Closure $handler): ?string
-    {
-        $startTime = microtime(true);
-
-        $result = $handler();
-
-        if ($result === false) {
-            return null;
-        }
-
-        return number_format((microtime(true) - $startTime) * 1000, 2);
-    }
-
-    /**
      * @return Consoler
      */
     protected function consoler(): Consoler

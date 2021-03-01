@@ -9,6 +9,7 @@ use Savks\Migro\Support\{
 };
 use RuntimeException;
 use Savks\Consoler\Support\SpinnerProgress;
+use Savks\LaravelUtils\Utils;
 use Schema;
 use Throwable;
 
@@ -101,95 +102,95 @@ class Migrate extends BaseCommand
             $manifest->file()->tag
         );
 
-        $stepsCount = 0;
+        $totalMeasuring = Utils::startMeasuring();
 
-        $runTime = $this->calcExecutionTime(function () use ($manifest, $stepsLimit, $name, $batch, &$stepsCount) {
-            $lastStep = $this->resolveLastStep($manifest);
+        $lastStep = $this->resolveLastStep($manifest);
 
-            $steps = array_slice(
-                $manifest->steps(),
-                $lastStep,
-                $stepsLimit
+        $steps = array_slice(
+            $manifest->steps(),
+            $lastStep,
+            $stepsLimit
+        );
+
+        $stepsCount = count($steps);
+
+        if (! $stepsCount) {
+            return 0;
+        }
+
+        $totalStepsCount = count(
+            $manifest->steps()
+        );
+
+        $consoler = $this->consoler();
+
+        $consoler->writelnToOutput("<comment>Migrating:</comment> {$name}");
+
+        /** @var SpinnerProgress[] $bars */
+        $bars = [];
+
+        for ($i = 0; $i < $totalStepsCount; $i++) {
+            if ($i < $lastStep) {
+                $consoler->createSpinnerProgress()->withMessage(
+                    'Step ' . ($i + 1) . ": {$consoler->format('migrated')->cyan()}"
+                )->finish();
+            } elseif ($i < $lastStep + $stepsCount) {
+                $bars[$i + 1] = $consoler->createSpinnerProgress()->withMessage(
+                    'Step ' . ($i + 1) . ": {$consoler->format('waiting')->yellow()}"
+                );
+            } else {
+                $consoler->createSpinnerProgress()->withMessage(
+                    'Step ' . ($i + 1) . ': <fg=white>outside the limits</>'
+                );
+            }
+        }
+
+        foreach ($steps as $index => $step) {
+            $bar = $bars[$step->number]->withMessage(
+                "Step {$step->number}: {$consoler->format('processing')->blue()->blink()}"
             );
 
-            $stepsCount = count($steps);
+            try {
+                $stepMeasuring = Utils::startMeasuring();
 
-            if (!$stepsCount) {
-                return;
-            }
+                $step->runHook($step::BEFORE_UP);
 
-            $totalStepsCount = count(
-                $manifest->steps()
-            );
+                $this->upStep($manifest, $step);
 
-            $consoler = $this->consoler();
-
-            $consoler->writelnToOutput("<comment>Migrating:</comment> {$name}");
-
-            /** @var SpinnerProgress[] $bars */
-            $bars = [];
-
-            for ($i = 0; $i < $totalStepsCount; $i++) {
-                if ($i < $lastStep) {
-                    $consoler->createSpinnerProgress()->withMessage(
-                        'Step ' . ($i + 1) . ": {$consoler->format('migrated')->cyan()}"
-                    )->finish();
-                } elseif ($i < $lastStep + $stepsCount) {
-                    $bars[$i + 1] = $consoler->createSpinnerProgress()->withMessage(
-                        'Step ' . ($i + 1) . ": {$consoler->format('waiting')->yellow()}"
-                    );
-                } else {
-                    $consoler->createSpinnerProgress()->withMessage(
-                        'Step ' . ($i + 1) . ': <fg=white>outside the limits</>'
-                    );
-                }
-            }
-
-            if (! $steps) {
-                return 0;
-            }
-
-            foreach ($steps as $index => $step) {
-                $bar = $bars[$step->number]->withMessage(
-                    "Step {$step->number}: {$consoler->format('processing')->blue()->blink()}"
+                $query = $this->connection()->table(
+                    app('migro')->table()
                 );
 
-                try {
-                    $runTime = $this->calcExecutionTime(function () use ($batch, $step, $manifest) {
-                        $step->runHook($step::BEFORE_UP);
+                $query->insert([
+                    'table' => $manifest->file()->table,
+                    'tag' => $manifest->file()->tag ?: null,
+                    'step' => $step->number,
+                    'batch' => $batch,
+                ]);
 
-                        $this->upStep($manifest, $step);
+                $step->runHook($step::AFTER_UP);
 
-                        $query = $this->connection()->table(
-                            app('migro')->table()
-                        );
+                $stepMeasuring->stop();
 
-                        $query->insert([
-                            'table' => $manifest->file()->table,
-                            'tag' => $manifest->file()->tag ?: null,
-                            'step' => $step->number,
-                            'batch' => $batch,
-                        ]);
+                $bar->withMessage(
+                    sprintf(
+                        'Step %s: %s',
+                        $step->number,
+                        $consoler->format("{$stepMeasuring->executionTime(false)}ms")->green()
+                    )
+                )->success();
+            } catch (Throwable $e) {
+                $bar->withMessage(
+                    "Step {$step->number}: {$consoler->format('failed')->red()}"
+                )->fail();
 
-                        $step->runHook($step::AFTER_UP);
-                    });
-
-                    $bar->withMessage(
-                        "Step {$step->number}: {$consoler->format("{$runTime}ms")->green()}"
-                    )->success();
-                } catch (Throwable $e) {
-                    $bar->withMessage(
-                        "Step {$step->number}: {$consoler->format('failed')->red()}"
-                    )->fail();
-
-                    throw $e;
-                }
+                throw $e;
             }
-        });
-
-        if ($stepsCount) {
-            $this->consoler()->writelnToOutput("<info>Migrated:</info>  {$name} ({$runTime}ms)");
         }
+
+        $totalMeasuring->stop();
+
+        $this->consoler()->writelnToOutput("<info>Migrated:</info>  {$name} ({$totalMeasuring->executionTime(false)}ms)");
 
         return $stepsCount;
     }

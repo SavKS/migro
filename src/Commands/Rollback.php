@@ -14,6 +14,7 @@ use Savks\Migro\Support\{
     Manifest,
     Step
 };
+use Savks\LaravelUtils\Utils;
 use Schema;
 use stdClass;
 use Throwable;
@@ -151,64 +152,82 @@ class Rollback extends BaseCommand
             }
         }
 
-        $runTime = $this->calcExecutionTime(function () use ($consoler, $bars, $group, $manifest, $records) {
-            foreach ($records as $record) {
-                $runTime = $this->calcExecutionTime(function () use ($consoler, $group, $bars, $record, $manifest) {
-                    $step = Arr::first(
-                        $manifest->steps(),
-                        function (Step $step) use ($record) {
-                            return $step->number === $record->step;
-                        }
-                    );
-
-                    if (! $step) {
-                        $bars[$step->number]->withMessage(
-                            "Step {$record->step}: {$consoler->format('Not found')->red()}"
-                        )->fail();
-
-                        $consoler->writelnToOutput(
-                            "{$consoler->format('Rolling back failed:')->red()} {$group}"
-                        );
-
-                        return false;
-                    }
-
-                    $bars[$step->number]->withMessage(
-                        "Step {$record->step}: {$consoler->format('processing')->cyan()}"
-                    );
-
-                    try {
-                        $step->runHook($step::BEFORE_DOWN);
-
-                        $this->downStep($manifest, $step);
-
-                        $query = $this->connection()->table(
-                            app('migro')->table()
-                        );
-
-                        $query->where('id', '=', $record->id)->delete();
-
-                        $step->runHook($step::AFTER_DOWN);
-                    } catch (\Throwable $e) {
-                        $bars[$step->number]->withMessage(
-                            "Step {$record->step}: {$consoler->format('failed')->red()}"
-                        )->fail();
-
-                        throw $e;
-                    }
-                });
-
-                $bars[$record->step]->withMessage(
-                    "Step {$record->step}: {$consoler->format("{$runTime}ms")->green()}"
-                )->success();
-            }
-        });
-
-        if ($runTime === null) {
+        if (! $records) {
             return;
         }
 
-        $this->getOutput()->writeln("<info>Rolled back:</info>  {$group} ({$runTime}ms)");
+        $totalMeasuring = Utils::startMeasuring();
+
+        foreach ($records as $record) {
+            $recordMeasuring = Utils::startMeasuring();
+
+            $step = Arr::first(
+                $manifest->steps(),
+                function (Step $step) use ($record) {
+                    return $step->number === $record->step;
+                }
+            );
+
+            if (! $step) {
+                $bars[$step->number]->withMessage(
+                    "Step {$record->step}: {$consoler->format('Not found')->red()}"
+                )->fail();
+
+                $consoler->writelnToOutput(
+                    "{$consoler->format('Rolling back failed:')->red()} {$group}"
+                );
+
+                return;
+            }
+
+            $bars[$step->number]->withMessage(
+                "Step {$record->step}: {$consoler->format('processing')->cyan()}"
+            );
+
+            try {
+                $step->runHook($step::BEFORE_DOWN);
+
+                $this->downStep($manifest, $step);
+
+                $query = $this->connection()->table(
+                    app('migro')->table()
+                );
+
+                $query->where('id', '=', $record->id)->delete();
+
+                $step->runHook($step::AFTER_DOWN);
+            } catch (\Throwable $e) {
+                $bars[$step->number]->withMessage(
+                    sprintf(
+                        'Step %s: %s',
+                        $record->step,
+                        $consoler->format('failed')->red()
+                    )
+                )->fail();
+
+                throw $e;
+            }
+
+            $recordMeasuring->stop();
+
+            $bars[$record->step]->withMessage(
+                sprintf(
+                    'Step %s: %s',
+                    $record->step,
+                    $consoler->format("{$recordMeasuring->executionTime(false)}ms")->green()
+                )
+            )->success();
+        }
+
+        $totalMeasuring->stop();
+
+        $this->getOutput()->writeln(
+            sprintf(
+                '<info>Rolled back:</info>  %s (%sms)',
+                $group,
+                $totalMeasuring->executionTime(false)
+            )
+        );
     }
 
     /**

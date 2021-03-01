@@ -1,7 +1,8 @@
 {
-    "name": "savks/laravel-migro",
+    "name": "savks/migro",
     "description": "Alternative laravel migrations",
     "type": "library",
+    "license": "MIT",
     "authors": [
         {
             "name": "Andrii Savluk",
@@ -9,10 +10,10 @@
         }
     ],
     "require": {
-        "laravel/framework": "^8.0"
-    },
-    "require-dev": {
-        "pestphp/pest": "^1.0"
+        "laravel/framework": "^8.0",
+        "symfony/filesystem": "^5.2",
+        "savks/laravel-utils": "dev-master",
+        "savks/consoler": "dev-master"
     },
     "autoload": {
         "psr-4": {

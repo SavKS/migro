@@ -2,6 +2,7 @@
 
 namespace Savks\Migro\Commands;
 
+use DB;
 use Illuminate\Console\Command;
 use Illuminate\Database\Schema\Blueprint;
 
@@ -24,7 +25,7 @@ class Install extends Command
     {
         $table = app('migro')->table();
 
-        $connection = \DB::connection(
+        $connection = DB::connection(
             $this->option('connection')
         );
 
@@ -45,7 +46,9 @@ class Install extends Command
 
             $table->integer('batch');
 
-            $table->timestamp('ran_at');
+            $table->timestamp('ran_at')->default(
+                DB::raw('CURRENT_TIMESTAMP')
+            );
         });
 
         $this->info('Migration table created successfully.');
